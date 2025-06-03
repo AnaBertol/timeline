@@ -181,6 +181,26 @@
             height: auto;
         }
 
+        .project-selector {
+            margin-bottom: 20px;
+        }
+
+        .project-selector label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #373737;
+        }
+
+        .project-selector select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            background: white;
+        }
+
         .info-message {
             background: #e8e0ff;
             padding: 20px;
@@ -208,6 +228,15 @@
         <div class="controls-section" id="controlsSection">
             <div class="info-message">
                 ℹ️ O SVG será otimizado para importação no Figma, com grupos nomeados e estrutura editável.
+            </div>
+
+            <div class="control-group">
+                <div class="project-selector">
+                    <label>Selecione o Projeto:</label>
+                    <select id="projectSelector" onchange="filterByProject()">
+                        <option value="all">Todos os Projetos</option>
+                    </select>
+                </div>
             </div>
 
             <div class="control-group">
@@ -255,6 +284,8 @@
         // Variáveis globais
         let csvData = [];
         let processedData = [];
+        let allProjects = [];
+        let currentProject = 'all';
         let svgContent = '';
         let colorPalette = ['#6F02FD', '#2C0165', '#6CDADE', '#3570DF', '#EDFF19', '#FFA4E8'];
         let groupColors = {};
@@ -322,9 +353,37 @@
                 return;
             }
 
+            // Identificar todos os projetos únicos
+            allProjects = [...new Set(validTasks.map(task => task.Project || 'Sem Projeto'))];
+            
+            // Atualizar o seletor de projetos
+            const projectSelector = document.getElementById('projectSelector');
+            projectSelector.innerHTML = '<option value="all">Todos os Projetos</option>';
+            allProjects.forEach(project => {
+                const option = document.createElement('option');
+                option.value = project;
+                option.textContent = project;
+                projectSelector.appendChild(option);
+            });
+
+            // Processar dados inicialmente com todos os projetos
+            processProjectData(validTasks);
+
+            // Mostrar controles
+            document.getElementById('controlsSection').classList.add('active');
+        }
+
+        // Processar dados de acordo com o projeto selecionado
+        function processProjectData(tasks) {
+            // Filtrar por projeto se necessário
+            let filteredTasks = tasks;
+            if (currentProject !== 'all') {
+                filteredTasks = tasks.filter(task => task.Project === currentProject);
+            }
+
             // Calcular período
             let allDates = [];
-            validTasks.forEach(task => {
+            filteredTasks.forEach(task => {
                 const dueDate = new Date(task['Due Date']);
                 let startDate = task.Start ? new Date(task.Start) : null;
                 
@@ -353,10 +412,20 @@
             document.getElementById('endDate').value = maxDate.toISOString().split('T')[0];
 
             // Processar e organizar dados
-            processedData = organizeData(validTasks);
+            processedData = organizeData(filteredTasks);
+        }
 
-            // Mostrar controles
-            document.getElementById('controlsSection').classList.add('active');
+        // Filtrar por projeto
+        function filterByProject() {
+            const selector = document.getElementById('projectSelector');
+            currentProject = selector.value;
+            
+            // Reprocessar dados com o filtro
+            const validTasks = csvData.filter(row => {
+                return row['Due Date'] && row.Task;
+            });
+            
+            processProjectData(validTasks);
         }
 
         // Organizar dados por grupo e projeto
@@ -633,10 +702,13 @@
         function resetAll() {
             csvData = [];
             processedData = [];
+            allProjects = [];
+            currentProject = 'all';
             svgContent = '';
             document.getElementById('fileInput').value = '';
             document.getElementById('controlsSection').classList.remove('active');
             document.getElementById('previewSection').classList.remove('active');
+            document.getElementById('projectSelector').innerHTML = '<option value="all">Todos os Projetos</option>';
         }
     </script>
 </body>

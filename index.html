@@ -689,12 +689,13 @@
             const dayWidth = availableWidth / totalDays;
             const weekWidth = dayWidth * 7;
             
-            // Calcular número de semanas
-            const totalWeeks = Math.ceil(totalDays / 7);
+            // Calcular número de semanas exatas entre as datas
+            const currentDate = new Date(weekStart);
+            let weekCount = 0;
             
-            // Desenhar cada semana
-            for (let i = 0; i < totalWeeks; i++) {
-                const weekX = leftMargin + (i * weekWidth);
+            // Contar semanas completas
+            while (currentDate <= weekEnd) {
+                const weekX = leftMargin + (weekCount * weekWidth);
                 
                 // Background da semana
                 svg += `<rect x="${weekX}" y="${yOffset}" width="${weekWidth}" height="25" 
@@ -702,7 +703,14 @@
                 
                 // Número da semana
                 svg += `<text x="${weekX + weekWidth/2}" y="${yOffset + 17}" text-anchor="middle" 
-                        font-family="Arial, sans-serif" font-size="10" fill="#666">${i + 1}</text>`;
+                        font-family="Arial, sans-serif" font-size="10" fill="#666">${weekCount + 1}</text>`;
+                
+                // Avançar para próxima segunda-feira
+                currentDate.setDate(currentDate.getDate() + 7);
+                weekCount++;
+                
+                // Parar se a próxima semana começaria depois do weekEnd
+                if (currentDate > weekEnd) break;
             }
             
             svg += '</g>';

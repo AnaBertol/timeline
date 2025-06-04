@@ -484,8 +484,15 @@
             const svgWidth = parseInt(document.getElementById('svgWidth').value);
             const barHeight = parseInt(document.getElementById('barHeight').value);
             
-            const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
-            const dayWidth = svgWidth / totalDays;
+            // Definir leftMargin antes de usar
+            const leftMargin = 300; // Espaço para lista de tarefas à esquerda
+            
+            // Ajustar datas para semanas completas
+            const weekStart = getWeekStart(startDate);
+            const weekEnd = getWeekEnd(endDate);
+            
+            const totalDays = Math.ceil((weekEnd - weekStart) / (1000 * 60 * 60 * 24)) + 1;
+            const dayWidth = (svgWidth - leftMargin) / totalDays;
             
             // Calcular altura total
             let totalTasks = 0;
@@ -496,8 +503,6 @@
             const headerHeight = 60; // Reduzido de 80
             const groupSpacing = 40;
             const taskSpacing = 4;
-            const taskListHeight = 20; // Altura para cada item da lista de tarefas
-            const leftMargin = 300; // Espaço para lista de tarefas à esquerda
             
             // Calcular altura total incluindo listas de tarefas
             let totalHeight = headerHeight;
@@ -518,10 +523,10 @@
             // Background
             svg += `<rect width="${svgWidth}" height="${svgHeight}" fill="#FAF9FA"/>`;
             
-            // Desenhar calendário
+            // Desenhar calendário com semanas completas
             svg += '<g id="calendario">';
-            svg += drawMonths(startDate, endDate, svgWidth, leftMargin);
-            svg += drawWeeks(startDate, endDate, svgWidth, 32, leftMargin); // 32 = 30 (altura do mês) + 2 (espaço)
+            svg += drawMonths(weekStart, weekEnd, svgWidth, leftMargin);
+            svg += drawWeeks(weekStart, weekEnd, svgWidth, 32, leftMargin); // 32 = 30 (altura do mês) + 2 (espaço)
             svg += '</g>';
             
             // Desenhar tarefas
@@ -547,8 +552,8 @@
                 
                 // Desenhar barras das tarefas
                 stage.tasks.forEach((task, index) => {
-                    const taskStartX = leftMargin + calculateX(task.start, startDate, (svgWidth - leftMargin) / totalDays);
-                    const taskEndX = leftMargin + calculateX(task.end, startDate, (svgWidth - leftMargin) / totalDays);
+                    const taskStartX = leftMargin + calculateX(task.start, weekStart, dayWidth);
+                    const taskEndX = leftMargin + calculateX(task.end, weekStart, dayWidth);
                     const taskWidth = taskEndX - taskStartX;
                     
                     svg += `<g id="task_bar_${sanitizeId(task.name)}_${index}">`;
@@ -584,72 +589,120 @@
             displayPreview();
         }
 
+        // Obter início da semana (segunda-feira)
+        function getWeekStart(date) {
+            const d = new Date(date);
+            const day = d.getDay();
+            const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+            d.setDate(diff);
+            d.setHours(0, 0, 0, 0);
+            return d;
+        }
+
+        // Obter fim da semana (domingo)
+        function getWeekEnd(date) {
+            const d = new Date(date);
+            const day = d.getDay();
+            const diff = d.getDate() - day + (day === 0 ? 0 : 7);
+            d.setDate(diff);
+            d.setHours(23, 59, 59, 999);
+            return d;
+        }
+
         // Desenhar meses
-        function drawMonths(startDate, endDate, width, leftMargin) {
+        function drawMonths(weekStart, weekEnd, width, leftMargin) {
             let svg = '<g id="months">';
             const availableWidth = width - leftMargin;
-            const dayWidth = availableWidth / Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
-            const tempDate = new Date(startDate);
+            const totalDays = Math.ceil((weekEnd - weekStart) / (1000 * 60 * 60 * 24)) + 1;
+            const dayWidth = availableWidth / totalDays;
             
-            let previousEndX = leftMargin; // Começar do leftMargin
+            // Encontrar todos os meses no período
+            const months = [];
             
-            while (tempDate <= endDate) {
-                const monthStart = new Date(tempDate);
-                const monthEnd = new Date(tempDate.getFullYear(), tempDate.getMonth() + 1, 0);
+            // Começar do primeiro dia do mês que contém weekStart
+            const firstMonth = new Date(weekStart.getFullYear(), weekStart.getMonth(), 1);
+            // Terminar no último dia do mês que contém weekEnd
+            const lastMonth = new Date(weekEnd.getFullYear(), weekEnd.getMonth() + 1, 0);
+            
+            // Iterar mês a mês
+            const currentMonth = new Date(firstMonth);
+            while (currentMonth <= lastMonth) {
+                const monthStart = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+                const monthEnd = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
                 
-                if (monthEnd > endDate) {
-                    monthEnd.setTime(endDate.getTime());
-                }
+                // Calcular onde este mês começa e termina visualmente
+                let visualStart = monthStart < weekStart ? weekStart : monthStart;
+                let visualEnd = monthEnd > weekEnd ? weekEnd : monthEnd;
                 
-                const monthStartX = previousEndX; // Usar o fim do mês anterior como início
-                const monthEndX = leftMargin + calculateX(monthEnd, startDate, dayWidth);
-                const monthWidth = monthEndX - monthStartX;
+                const startX = leftMargin + calculateX(visualStart, weekStart, dayWidth);
+                const endX = leftMargin + calculateX(visualEnd, weekStart, dayWidth);
                 
-                // Background do mês (sem gaps)
-                svg += `<rect x="${monthStartX}" y="0" width="${monthWidth}" height="30" fill="#373737"/>`;
+                months.push({
+                    x: startX,
+                    width: endX - startX,
+                    name: monthStart.toLocaleDateString('pt-BR', { month: 'long' }),
+                    shortName: monthStart.toLocaleDateString('pt-BR', { month: 'short' })
+                });
                 
-                // Nome do mês (fonte menor)
-                const monthName = monthStart.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-                svg += `<text x="${monthStartX + monthWidth/2}" y="20" text-anchor="middle" 
-                        font-family="Arial, sans-serif" font-size="14" fill="#FAF9FA">`;
-                svg += monthName.charAt(0).toUpperCase() + monthName.slice(1);
-                svg += '</text>';
-                
-                previousEndX = monthEndX; // Guardar para o próximo mês
-                tempDate.setMonth(tempDate.getMonth() + 1);
+                // Avançar para o próximo mês
+                currentMonth.setMonth(currentMonth.getMonth() + 1);
             }
+            
+            // Desenhar as barras dos meses sem gaps
+            let previousEndX = leftMargin;
+            
+            months.forEach((month, index) => {
+                if (month.width > 0) {
+                    // Usar o fim do mês anterior como início do atual
+                    const startX = index === 0 ? month.x : previousEndX;
+                    const endX = month.x + month.width;
+                    const actualWidth = endX - startX;
+                    
+                    // Background do mês
+                    svg += `<rect x="${startX}" y="0" width="${actualWidth}" height="30" fill="#373737"/>`;
+                    
+                    // Decidir se usa nome completo ou abreviado
+                    const minWidthForFullName = 80;
+                    const monthName = actualWidth < minWidthForFullName ? month.shortName : month.name;
+                    
+                    // Nome do mês (apenas se houver espaço suficiente)
+                    if (actualWidth > 30) {
+                        svg += `<text x="${startX + actualWidth/2}" y="20" text-anchor="middle" 
+                                font-family="Arial, sans-serif" font-size="14" fill="#FAF9FA">`;
+                        svg += monthName.charAt(0).toUpperCase() + monthName.slice(1);
+                        svg += '</text>';
+                    }
+                    
+                    previousEndX = endX;
+                }
+            });
             
             svg += '</g>';
             return svg;
         }
 
         // Desenhar semanas
-        function drawWeeks(startDate, endDate, width, yOffset, leftMargin) {
+        function drawWeeks(weekStart, weekEnd, width, yOffset, leftMargin) {
             let svg = '<g id="weeks">';
             const availableWidth = width - leftMargin;
-            const dayWidth = availableWidth / Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
-            const tempDate = new Date(startDate);
-            let weekNumber = 1;
+            const totalDays = Math.ceil((weekEnd - weekStart) / (1000 * 60 * 60 * 24)) + 1;
+            const dayWidth = availableWidth / totalDays;
+            const weekWidth = dayWidth * 7;
             
-            // Ajustar para segunda-feira
-            const dayOfWeek = tempDate.getDay();
-            const daysToMonday = dayOfWeek === 0 ? 1 : (8 - dayOfWeek) % 7;
-            tempDate.setDate(tempDate.getDate() + daysToMonday);
+            // Calcular número de semanas
+            const totalWeeks = Math.ceil(totalDays / 7);
             
-            while (tempDate <= endDate) {
-                const weekStart = new Date(tempDate);
-                const weekX = leftMargin + calculateX(weekStart, startDate, dayWidth);
+            // Desenhar cada semana
+            for (let i = 0; i < totalWeeks; i++) {
+                const weekX = leftMargin + (i * weekWidth);
                 
                 // Background da semana
-                svg += `<rect x="${weekX}" y="${yOffset}" width="${dayWidth * 7}" height="25" 
+                svg += `<rect x="${weekX}" y="${yOffset}" width="${weekWidth}" height="25" 
                         fill="none" stroke="#ddd" stroke-width="1"/>`;
                 
                 // Número da semana
-                svg += `<text x="${weekX + (dayWidth * 3.5)}" y="${yOffset + 17}" text-anchor="middle" 
-                        font-family="Arial, sans-serif" font-size="10" fill="#666">${weekNumber}</text>`;
-                
-                weekNumber++;
-                tempDate.setDate(tempDate.getDate() + 7);
+                svg += `<text x="${weekX + weekWidth/2}" y="${yOffset + 17}" text-anchor="middle" 
+                        font-family="Arial, sans-serif" font-size="10" fill="#666">${i + 1}</text>`;
             }
             
             svg += '</g>';

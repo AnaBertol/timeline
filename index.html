@@ -494,11 +494,11 @@
                 filteredTasks = tasks.filter(task => task.Project === currentProject);
             }
 
-            // Calcular período
+            // Calcular período real das tarefas (sem ajustes ainda) - USANDO NORMALIZAÇÃO
             let allDates = [];
             filteredTasks.forEach(task => {
-                const dueDate = new Date(task['Due Date']);
-                let startDate = task.Start ? new Date(task.Start) : null;
+                const dueDate = normalizeDate(task['Due Date']);
+                let startDate = task.Start ? normalizeDate(task.Start) : null;
                 
                 if (!startDate || isNaN(startDate)) {
                     startDate = new Date(dueDate);
@@ -508,11 +508,11 @@
                 allDates.push(startDate, dueDate);
             });
 
-            const minDate = new Date(Math.min(...allDates));
-            const maxDate = new Date(Math.max(...allDates));
+            const minTaskDate = new Date(Math.min(...allDates));
+            const maxTaskDate = new Date(Math.max(...allDates));
             
-            // Ajustar para início e fim de período baseado no nível
-            const adjustedDates = adjustDateRange(minDate, maxDate);
+            // Ajustar período para incluir contexto visual, mas manter referência às datas reais
+            const adjustedDates = adjustDateRange(minTaskDate, maxTaskDate);
             
             // Atualizar inputs
             document.getElementById('startDate').value = adjustedDates.start.toISOString().split('T')[0];
@@ -525,32 +525,33 @@
             createStageOrderInterface();
         }
 
-        // Ajustar range de datas baseado no nível
+        // Ajustar range de datas baseado no nível (CORRIGIDO)
         function adjustDateRange(minDate, maxDate) {
             const start = new Date(minDate);
             const end = new Date(maxDate);
 
+            // Adicionar margem conservadora primeiro
+            start.setDate(start.getDate() - 3);
+            end.setDate(end.getDate() + 3);
+
+            // Depois ajustar para boundaries naturais baseado no nível
             switch (timeLevels) {
                 case 'year-month':
-                    // Ajustar para início/fim do ano
-                    start.setMonth(0, 1);
-                    end.setFullYear(end.getFullYear() + 1, 0, 0);
-                    break;
-                case 'month-week':
-                    // Ajustar para início/fim do mês
+                    // Ajustar para início/fim do mês mais próximo
                     start.setDate(1);
                     end.setMonth(end.getMonth() + 1, 0);
                     break;
+                case 'month-week':
+                    // Ajustar para início da semana mais próxima
+                    const startWeekDay = start.getDay();
+                    const endWeekDay = end.getDay();
+                    start.setDate(start.getDate() - (startWeekDay === 0 ? 6 : startWeekDay - 1));
+                    end.setDate(end.getDate() + (endWeekDay === 0 ? 0 : 7 - endWeekDay));
+                    break;
                 case 'week-day':
-                    // Ajustar para início/fim da semana
-                    start.setDate(start.getDate() - start.getDay() + 1);
-                    end.setDate(end.getDate() + (7 - end.getDay()));
+                    // Já está adequado com a margem de 3 dias
                     break;
             }
-
-            // Adicionar margem
-            start.setDate(start.getDate() - 7);
-            end.setDate(end.getDate() + 7);
 
             return { start, end };
         }
@@ -585,9 +586,11 @@
 
         // Organizar dados por grupo e projeto
         function organizeData(tasks) {
+            console.log(`📋 DEBUG - Organizando ${tasks.length} tarefas:`);
+            
             const organized = {};
             
-            tasks.forEach(task => {
+            tasks.forEach((task, index) => {
                 const stage = task['Project Stage'] || 'Sem Estágio';
                 
                 if (!organized[stage]) {
@@ -597,13 +600,24 @@
                     };
                 }
                 
-                // Processar datas
-                const dueDate = new Date(task['Due Date']);
-                let startDate = task.Start ? new Date(task.Start) : null;
+                // Processar datas usando a função normalizada
+                const dueDate = normalizeDate(task['Due Date']);
+                let startDate = task.Start ? normalizeDate(task.Start) : null;
                 
                 if (!startDate || isNaN(startDate)) {
                     startDate = new Date(dueDate);
                     startDate.setDate(startDate.getDate() - 7);
+                }
+                
+                // Log apenas das primeiras 3 tarefas para não poluir o console
+                if (index < 3) {
+                    console.log(`   Tarefa ${index + 1}: ${task.Task}`);
+                    console.log(`      Due Date original: ${task['Due Date']}`);
+                    console.log(`      Due Date normalizada: ${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, '0')}-${String(dueDate.getDate()).padStart(2, '0')}`);
+                    if (task.Start) {
+                        console.log(`      Start original: ${task.Start}`);
+                        console.log(`      Start normalizada: ${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`);
+                    }
                 }
                 
                 organized[stage].tasks.push({
@@ -632,36 +646,63 @@
             return organized;
         }
 
-        // Gerar dias úteis (sem finais de semana se configurado)
-        function generateWorkingDays(startDate, endDate) {
-            const days = [];
-            const currentDate = new Date(startDate);
+        // Gerar dias da timeline (CORRIGIDO)
+        function generateTimelineDays(startDate, endDate) {
+            console.log(`📅 DEBUG - Gerando timeline de dias:`);
+            console.log(`   Data inicial: ${startDate.toISOString().split('T')[0]}`);
+            console.log(`   Data final: ${endDate.toISOString().split('T')[0]}`);
+            console.log(`   Incluir finais de semana: ${includeWeekends}`);
             
-            while (currentDate <= endDate) {
+            const days = [];
+            
+            // Usar normalização consistente para evitar problemas de fuso horário
+            const currentDate = normalizeDate(startDate);
+            const endDateNormalized = normalizeDate(endDate);
+            
+            let dayCount = 0;
+            while (currentDate <= endDateNormalized) {
                 const dayOfWeek = currentDate.getDay();
+                const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
                 
-                if (includeWeekends || (dayOfWeek !== 0 && dayOfWeek !== 6)) {
+                // Incluir o dia se finais de semana estão habilitados OU se não é fim de semana
+                if (includeWeekends || !isWeekend) {
                     days.push(new Date(currentDate));
+                    dayCount++;
                 }
                 
                 currentDate.setDate(currentDate.getDate() + 1);
             }
+            
+            console.log(`   Total de dias na timeline: ${days.length}`);
+            console.log(`   Primeiros 5 dias:`, days.slice(0, 5).map(d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`));
+            console.log(`   Últimos 5 dias:`, days.slice(-5).map(d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`));
             
             return days;
         }
 
         // Gerar SVG
         function generateSVG() {
+            console.log(`🚀 DEBUG - Iniciando geração do SVG`);
+            
             const startDate = new Date(document.getElementById('startDate').value);
             const endDate = new Date(document.getElementById('endDate').value);
             const svgWidth = parseInt(document.getElementById('svgWidth').value);
             const barHeight = parseInt(document.getElementById('barHeight').value);
             const taskAreaWidth = parseInt(document.getElementById('taskAreaWidth').value);
             
-            // Gerar dias úteis baseado na configuração
-            const workingDays = generateWorkingDays(startDate, endDate);
-            const totalDays = workingDays.length;
+            console.log(`   Configurações:`);
+            console.log(`   - Período: ${startDate.toISOString().split('T')[0]} até ${endDate.toISOString().split('T')[0]}`);
+            console.log(`   - Nível de tempo: ${timeLevels}`);
+            console.log(`   - Largura SVG: ${svgWidth}px`);
+            console.log(`   - Área de tarefas: ${taskAreaWidth}px`);
+            
+            // Gerar timeline de dias baseada na configuração
+            const timelineDays = generateTimelineDays(startDate, endDate);
+            const totalDays = timelineDays.length;
             const dayWidth = (svgWidth - taskAreaWidth) / totalDays;
+            
+            console.log(`   - Largura por dia: ${dayWidth}px`);
+            console.log(`   - Área disponível para timeline: ${svgWidth - taskAreaWidth}px`);
             
             // Calcular altura total
             let totalTasks = 0;
@@ -677,7 +718,6 @@
             let totalHeight = headerHeight;
             Object.values(processedData).forEach(stage => {
                 totalHeight += 30; // Título da etapa
-                // Altura fixa para cada tarefa
                 totalHeight += stage.tasks.length * (barHeight + taskSpacing);
                 totalHeight += groupSpacing;
             });
@@ -688,7 +728,6 @@
             
             // Adicionar definições
             svg += '<defs>';
-            // ClipPath para texto das tarefas
             svg += `<clipPath id="taskTextClip">
                       <rect x="10" y="0" width="${taskAreaWidth - 20}" height="${svgHeight}"/>
                     </clipPath>`;
@@ -699,70 +738,81 @@
             
             // Desenhar calendário
             svg += '<g id="calendario">';
-            svg += drawTimeHeaders(workingDays, svgWidth, taskAreaWidth, dayWidth);
+            svg += drawTimeHeaders(timelineDays, svgWidth, taskAreaWidth, dayWidth);
             svg += '</g>';
             
-            // Barras de fundo (linhas de grade baseadas no segundo nível)
+            // Barras de fundo
             svg += '<g id="background_bars">';
-            svg += drawBackgroundBars(workingDays, svgWidth, taskAreaWidth, dayWidth, svgHeight, headerHeight);
+            svg += drawBackgroundBars(timelineDays, svgWidth, taskAreaWidth, dayWidth, svgHeight, headerHeight);
             svg += '</g>';
             
             // Desenhar tarefas na ordem definida pelo usuário
             let yOffset = headerHeight;
             const orderedStages = getOrderedStages();
             
+            console.log(`📋 DEBUG - Processando ${orderedStages.length} etapas:`);
+            
             orderedStages.forEach(([stageKey, stage]) => {
+                console.log(`\n📂 Etapa: ${stage.name} (${stage.tasks.length} tarefas)`);
+                
                 svg += `<g id="stage_${sanitizeId(stageKey)}">`;
                 
                 // Título da etapa
                 svg += `<text x="20" y="${yOffset}" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="bold" fill="#373737">${stage.name}</text>`;
                 yOffset += 20;
                 
-                // Lista de tarefas à esquerda (texto completo com clipping e barras de fundo)
+                // Lista de tarefas à esquerda
                 const barsStartY = yOffset;
                 svg += `<g id="task_list_${sanitizeId(stageKey)}" clip-path="url(#taskTextClip)">`;
                 
                 let currentTaskY = barsStartY;
                 stage.tasks.forEach((task, index) => {
-                    // Usar altura fixa baseada na altura da barra
                     const taskHeight = barHeight;
-                    
-                    // Barra de fundo para a tarefa na lista
                     const bgColor = groupColors[stageKey];
-                    // Determinar cor do texto baseada no contraste
                     const textColor = getContrastColor(bgColor);
                     
-                    svg += `<rect x="10" y="${currentTaskY}" width="${taskAreaWidth - 20}" height="${barHeight}" 
-                            fill="${bgColor}" rx="4" ry="4"/>`;
+                    // Calcular raio dos cantos baseado na altura da barra (mesmo que as barras da timeline)
+                    const cornerRadius = Math.min(barHeight * 0.2, 6);
                     
-                    // Texto completo em uma linha (será cortado pelo clip-path)
+                    svg += `<rect x="10" y="${currentTaskY}" width="${taskAreaWidth - 20}" height="${barHeight}" 
+                            fill="${bgColor}" rx="${cornerRadius}" ry="${cornerRadius}"/>`;
+                    
                     const textY = currentTaskY + (taskHeight / 2) + 6;
                     svg += `<text x="${taskAreaWidth - 15}" y="${textY}" font-family="Inter, Arial, sans-serif" font-size="13" fill="${textColor}" text-anchor="end">`;
-                    svg += task.name; // Texto completo, sem quebra
+                    svg += task.name;
                     svg += '</text>';
                     
                     currentTaskY += taskHeight + taskSpacing;
                 });
                 svg += '</g>';
                 
-                // Desenhar barras das tarefas
+                // Desenhar barras das tarefas (CORRIGIDO)
                 currentTaskY = barsStartY;
                 stage.tasks.forEach((task, index) => {
-                    // Usar altura fixa
+                    console.log(`\n   📊 Tarefa ${index + 1}: ${task.name}`);
+                    console.log(`      Data início: ${task.start.toISOString().split('T')[0]}`);
+                    console.log(`      Data fim: ${task.end.toISOString().split('T')[0]}`);
+                    
                     const taskHeight = barHeight;
                     
-                    const taskStartX = taskAreaWidth + calculateX(task.start, workingDays, dayWidth);
-                    const taskEndX = taskAreaWidth + calculateX(task.end, workingDays, dayWidth);
-                    const taskWidth = Math.max(taskEndX - taskStartX, dayWidth); // Mínimo de 1 dia
+                    // CORRIGIDO: Usar a nova função com parâmetro para data final
+                    const taskStartX = taskAreaWidth + calculateTaskPosition(task.start, timelineDays, dayWidth, false);
+                    const taskEndX = taskAreaWidth + calculateTaskPosition(task.end, timelineDays, dayWidth, true);
+                    const taskWidth = Math.max(taskEndX - taskStartX, dayWidth * 0.5); // Mínimo de meio dia
+                    
+                    console.log(`      Posição X inicial: ${taskStartX}px`);
+                    console.log(`      Posição X final: ${taskEndX}px`);
+                    console.log(`      Largura da barra: ${taskWidth}px`);
+                    
+                    // Calcular raio dos cantos baseado na altura da barra
+                    const cornerRadius = Math.min(barHeight * 0.2, 6); // 20% da altura ou 6px, o que for menor
                     
                     svg += `<g id="task_bar_${sanitizeId(task.name)}_${index}">`;
                     
-                    // Barra da tarefa
                     const opacity = task.completed ? 0.4 : 1;
                     svg += `<rect x="${taskStartX}" y="${currentTaskY}" width="${taskWidth}" height="${barHeight}" 
-                            fill="${groupColors[stageKey]}" opacity="${opacity}" rx="4" ry="4"/>`;
+                            fill="${groupColors[stageKey]}" opacity="${opacity}" rx="${cornerRadius}" ry="${cornerRadius}"/>`;
                     
-                    // Metadata como atributos (para uso no Figma)
                     svg += `<!-- Task: ${task.name}, Start: ${task.start.toISOString().split('T')[0]}, End: ${task.end.toISOString().split('T')[0]} -->`;
                     
                     svg += '</g>';
@@ -777,16 +827,109 @@
             
             svgContent = svg;
             displayPreview();
+            
+            console.log(`✅ DEBUG - SVG gerado com sucesso!`);
         }
 
-        // Desenhar barras de fundo (linhas de grade baseadas no segundo nível)
-        function drawBackgroundBars(workingDays, width, leftMargin, dayWidth, svgHeight, headerHeight) {
+        // Função auxiliar para normalizar data sem problemas de fuso horário
+        function normalizeDate(date) {
+            if (typeof date === 'string') {
+                // Se é string no formato YYYY-MM-DD, criar data local
+                const parts = date.split('-');
+                return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+            } else {
+                // Se já é objeto Date, criar nova instância para evitar mutação
+                return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+            }
+        }
+
+        // NOVA FUNÇÃO: Calcular posição da tarefa de forma mais precisa
+        function calculateTaskPosition(taskDate, timelineDays, dayWidth, isEndDate = false) {
+            // Normalizar data da tarefa SEM problemas de fuso horário
+            const normalizedTaskDate = normalizeDate(taskDate);
+            
+            // Se é data final, precisamos encontrar o próximo dia útil na timeline
+            if (isEndDate) {
+                // Em vez de só adicionar 1 dia, vamos encontrar o próximo dia útil disponível na timeline
+                let endDate = new Date(normalizedTaskDate);
+                endDate.setDate(endDate.getDate() + 1);
+                
+                // Se não incluir finais de semana, avançar até o próximo dia útil
+                if (!includeWeekends) {
+                    while (endDate.getDay() === 0 || endDate.getDay() === 6) {
+                        endDate.setDate(endDate.getDate() + 1);
+                    }
+                }
+                
+                normalizedTaskDate.setTime(endDate.getTime());
+            }
+            
+            console.log(`🔍 DEBUG - Calculando posição para tarefa:`);
+            console.log(`   Data da tarefa original: ${taskDate.toISOString().split('T')[0]}`);
+            console.log(`   É data final: ${isEndDate}`);
+            console.log(`   Data normalizada: ${normalizedTaskDate.getFullYear()}-${String(normalizedTaskDate.getMonth() + 1).padStart(2, '0')}-${String(normalizedTaskDate.getDate()).padStart(2, '0')}`);
+            console.log(`   Timeline tem ${timelineDays.length} dias`);
+            console.log(`   Largura do dia: ${dayWidth}px`);
+            
+            // Procurar a data exata ou a mais próxima
+            for (let i = 0; i < timelineDays.length; i++) {
+                const timelineDate = normalizeDate(timelineDays[i]);
+                
+                if (timelineDate.getTime() === normalizedTaskDate.getTime()) {
+                    // Data exata encontrada
+                    const position = i * dayWidth;
+                    console.log(`   ✅ Data exata encontrada no índice ${i}, posição: ${position}px`);
+                    return position;
+                }
+                
+                if (timelineDate.getTime() > normalizedTaskDate.getTime()) {
+                    // A data da tarefa está entre duas datas da timeline
+                    if (i === 0) {
+                        // Tarefa antes do início da timeline
+                        console.log(`   ⚠️ Tarefa antes do início da timeline, posição: 0px`);
+                        return 0;
+                    }
+                    
+                    // Para datas finais que caem entre dias úteis, usar o início do próximo dia útil
+                    if (isEndDate) {
+                        const position = i * dayWidth;
+                        console.log(`   📍 Data final ajustada para próximo dia útil no índice ${i}, posição: ${position}px`);
+                        return position;
+                    }
+                    
+                    // Para datas de início, manter a interpolação
+                    const prevDate = normalizeDate(timelineDays[i - 1]);
+                    
+                    const daysDiff = (normalizedTaskDate.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24);
+                    const daysInInterval = (timelineDate.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24);
+                    
+                    const interpolationFactor = daysDiff / daysInInterval;
+                    const position = ((i - 1) + interpolationFactor) * dayWidth;
+                    
+                    const prevDateStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-${String(prevDate.getDate()).padStart(2, '0')}`;
+                    const timelineDateStr = `${timelineDate.getFullYear()}-${String(timelineDate.getMonth() + 1).padStart(2, '0')}-${String(timelineDate.getDate()).padStart(2, '0')}`;
+                    
+                    console.log(`   📍 Interpolando entre ${prevDateStr} e ${timelineDateStr}`);
+                    console.log(`   Dias de diferença: ${daysDiff}, Intervalo: ${daysInInterval}, Fator: ${interpolationFactor}`);
+                    console.log(`   Posição calculada: ${position}px`);
+                    
+                    return position;
+                }
+            }
+            
+            // Tarefa após o fim da timeline
+            const position = (timelineDays.length - 1) * dayWidth;
+            console.log(`   ⚠️ Tarefa após o fim da timeline, posição: ${position}px`);
+            return position;
+        }
+
+        // Desenhar barras de fundo (atualizado para usar a nova lista de dias)
+        function drawBackgroundBars(timelineDays, width, leftMargin, dayWidth, svgHeight, headerHeight) {
             let svg = '';
             
             if (timeLevels === 'year-month') {
-                // Agrupar por meses para barras de fundo
                 const months = {};
-                workingDays.forEach((day, index) => {
+                timelineDays.forEach((day, index) => {
                     const monthKey = `${day.getFullYear()}-${day.getMonth()}`;
                     if (!months[monthKey]) months[monthKey] = [];
                     months[monthKey].push({ day, index });
@@ -801,9 +944,8 @@
                 });
                 
             } else if (timeLevels === 'month-week') {
-                // Agrupar por semanas para barras de fundo
                 const weeks = {};
-                workingDays.forEach((day, index) => {
+                timelineDays.forEach((day, index) => {
                     const weekStart = getWeekStart(day);
                     const weekKey = weekStart.toISOString().split('T')[0];
                     if (!weeks[weekKey]) weeks[weekKey] = [];
@@ -819,8 +961,7 @@
                 });
                 
             } else if (timeLevels === 'week-day') {
-                // Cada dia tem sua própria barra de fundo
-                workingDays.forEach((day, index) => {
+                timelineDays.forEach((day, index) => {
                     const startX = leftMargin + (index * dayWidth);
                     
                     svg += `<rect x="${startX}" y="${headerHeight}" width="${dayWidth}" height="${svgHeight - headerHeight}" 
@@ -831,36 +972,35 @@
             return svg;
         }
 
-        // Desenhar cabeçalhos de tempo
-        function drawTimeHeaders(workingDays, width, leftMargin, dayWidth) {
+        // Desenhar cabeçalhos de tempo (atualizado)
+        function drawTimeHeaders(timelineDays, width, leftMargin, dayWidth) {
             let svg = '<g id="time_headers">';
-            const availableWidth = width - leftMargin;
             
             if (timeLevels === 'year-month') {
-                svg += drawYearMonthHeaders(workingDays, leftMargin, dayWidth);
+                svg += drawYearMonthHeaders(timelineDays, leftMargin, dayWidth);
             } else if (timeLevels === 'month-week') {
-                svg += drawMonthWeekHeaders(workingDays, leftMargin, dayWidth);
+                svg += drawMonthWeekHeaders(timelineDays, leftMargin, dayWidth);
             } else if (timeLevels === 'week-day') {
-                svg += drawWeekDayHeaders(workingDays, leftMargin, dayWidth);
+                svg += drawWeekDayHeaders(timelineDays, leftMargin, dayWidth);
             }
             
             svg += '</g>';
             return svg;
         }
 
-        // Desenhar cabeçalhos de ano e mês
-        function drawYearMonthHeaders(workingDays, leftMargin, dayWidth) {
+        // Desenhar cabeçalhos de ano e mês (atualizado)
+        function drawYearMonthHeaders(timelineDays, leftMargin, dayWidth) {
             let svg = '';
             
             // Agrupar por anos
             const years = {};
-            workingDays.forEach((day, index) => {
+            timelineDays.forEach((day, index) => {
                 const year = day.getFullYear();
                 if (!years[year]) years[year] = [];
                 years[year].push({ day, index });
             });
             
-            // Desenhar anos (nível superior)
+            // Desenhar anos
             Object.entries(years).forEach(([year, days]) => {
                 const startX = leftMargin + (days[0].index * dayWidth);
                 const width = days.length * dayWidth;
@@ -874,13 +1014,13 @@
             
             // Agrupar por meses
             const months = {};
-            workingDays.forEach((day, index) => {
+            timelineDays.forEach((day, index) => {
                 const monthKey = `${day.getFullYear()}-${day.getMonth()}`;
                 if (!months[monthKey]) months[monthKey] = [];
                 months[monthKey].push({ day, index });
             });
             
-            // Desenhar meses (nível inferior)
+            // Desenhar meses
             Object.entries(months).forEach(([monthKey, days]) => {
                 const startX = leftMargin + (days[0].index * dayWidth);
                 const width = days.length * dayWidth;
@@ -894,7 +1034,6 @@
                             font-family="Inter, Arial, sans-serif" font-size="16" fill="#373737">
                             ${monthName.charAt(0).toUpperCase() + monthName.slice(1)}</text>`;
                 } else if (width > 30) {
-                    // Usar abreviação para meses pequenos
                     const shortMonth = days[0].day.toLocaleDateString('pt-BR', { month: 'short' });
                     svg += `<text x="${startX + width/2}" y="85" text-anchor="middle" 
                             font-family="Inter, Arial, sans-serif" font-size="14" fill="#373737">
@@ -905,19 +1044,21 @@
             return svg;
         }
 
-        // Desenhar cabeçalhos de mês e semana
-        function drawMonthWeekHeaders(workingDays, leftMargin, dayWidth) {
+        // Desenhar cabeçalhos de mês e semana (atualizado)
+        function drawMonthWeekHeaders(timelineDays, leftMargin, dayWidth) {
             let svg = '';
+            
+            console.log(`📅 DEBUG - Desenhando cabeçalhos de mês e semana:`);
             
             // Agrupar por meses
             const months = {};
-            workingDays.forEach((day, index) => {
+            timelineDays.forEach((day, index) => {
                 const monthKey = `${day.getFullYear()}-${day.getMonth()}`;
                 if (!months[monthKey]) months[monthKey] = [];
                 months[monthKey].push({ day, index });
             });
             
-            // Desenhar meses (nível superior)
+            // Desenhar meses
             Object.entries(months).forEach(([monthKey, days]) => {
                 const startX = leftMargin + (days[0].index * dayWidth);
                 const width = days.length * dayWidth;
@@ -933,14 +1074,16 @@
             
             // Agrupar por semanas
             const weeks = {};
-            workingDays.forEach((day, index) => {
+            timelineDays.forEach((day, index) => {
                 const weekStart = getWeekStart(day);
                 const weekKey = weekStart.toISOString().split('T')[0];
                 if (!weeks[weekKey]) weeks[weekKey] = [];
                 weeks[weekKey].push({ day, index });
             });
             
-            // Desenhar semanas (nível inferior)  
+            console.log(`   Total de semanas encontradas: ${Object.keys(weeks).length}`);
+            
+            // Desenhar semanas
             Object.entries(weeks).forEach(([weekKey, days]) => {
                 const startX = leftMargin + (days[0].index * dayWidth);
                 const width = days.length * dayWidth;
@@ -949,6 +1092,16 @@
                 const weekEnd = days[days.length - 1].day;
                 const startDay = weekStart.getDate();
                 const endDay = weekEnd.getDate();
+                
+                // Log das primeiras 3 semanas para debug
+                const weekIndex = Object.keys(weeks).indexOf(weekKey);
+                if (weekIndex < 3) {
+                    console.log(`   Semana ${weekIndex + 1}: ${startDay}-${endDay}`);
+                    console.log(`      Início real: ${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, '0')}-${String(weekStart.getDate()).padStart(2, '0')}`);
+                    console.log(`      Fim real: ${weekEnd.getFullYear()}-${String(weekEnd.getMonth() + 1).padStart(2, '0')}-${String(weekEnd.getDate()).padStart(2, '0')}`);
+                    console.log(`      Posição X: ${startX}px, Largura: ${width}px`);
+                    console.log(`      Dias na semana: ${days.length}`);
+                }
                 
                 svg += `<rect x="${startX}" y="50" width="${width}" height="50" 
                         fill="#D9D9D9" rx="4" ry="4" stroke="white" stroke-width="4"/>`;
@@ -963,20 +1116,20 @@
             return svg;
         }
 
-        // Desenhar cabeçalhos de semana e dia
-        function drawWeekDayHeaders(workingDays, leftMargin, dayWidth) {
+        // Desenhar cabeçalhos de semana e dia (atualizado)
+        function drawWeekDayHeaders(timelineDays, leftMargin, dayWidth) {
             let svg = '';
             
             // Agrupar por semanas
             const weeks = {};
-            workingDays.forEach((day, index) => {
+            timelineDays.forEach((day, index) => {
                 const weekStart = getWeekStart(day);
                 const weekKey = weekStart.toISOString().split('T')[0];
                 if (!weeks[weekKey]) weeks[weekKey] = [];
                 weeks[weekKey].push({ day, index });
             });
             
-            // Desenhar semanas (nível superior)
+            // Desenhar semanas
             Object.entries(weeks).forEach(([weekKey, days]) => {
                 const startX = leftMargin + (days[0].index * dayWidth);
                 const width = days.length * dayWidth;
@@ -995,8 +1148,8 @@
                         ${monthName} ${startDay}-${endDay}</text>`;
             });
             
-            // Desenhar dias (nível inferior)
-            workingDays.forEach((day, index) => {
+            // Desenhar dias
+            timelineDays.forEach((day, index) => {
                 const startX = leftMargin + (index * dayWidth);
                 const dayNum = day.getDate();
                 const dayName = day.toLocaleDateString('pt-BR', { weekday: 'short' });
@@ -1015,34 +1168,14 @@
             return svg;
         }
 
-        // Calcular posição X baseada nos dias úteis
-        function calculateX(date, workingDays, dayWidth) {
-            const targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-            
-            for (let i = 0; i < workingDays.length; i++) {
-                const workingDate = new Date(workingDays[i].getFullYear(), workingDays[i].getMonth(), workingDays[i].getDate());
-                if (workingDate.getTime() === targetDate.getTime()) {
-                    return i * dayWidth;
-                }
-                if (workingDate.getTime() > targetDate.getTime()) {
-                    return Math.max(0, i - 1) * dayWidth;
-                }
-            }
-            
-            return (workingDays.length - 1) * dayWidth;
-        }
-
         // Função para determinar cor do texto baseada no contraste
         function getContrastColor(hexColor) {
-            // Converter hex para RGB
             const r = parseInt(hexColor.substr(1, 2), 16);
             const g = parseInt(hexColor.substr(3, 2), 16);
             const b = parseInt(hexColor.substr(5, 2), 16);
             
-            // Calcular luminância
             const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
             
-            // Retornar preto ou branco baseado na luminância
             return luminance > 0.5 ? '#000000' : '#FFFFFF';
         }
 
@@ -1060,7 +1193,6 @@
                 }
             });
             
-            // Adicionar qualquer etapa que não esteja na ordem (caso tenham sido adicionadas depois)
             Object.entries(processedData).forEach(entry => {
                 if (!orderedStages.find(([key]) => key === entry[0])) {
                     orderedStages.push(entry);
@@ -1083,7 +1215,6 @@
             container.style.display = 'block';
             list.innerHTML = '';
             
-            // Inicializar ordem se não existir
             if (stageOrder.length === 0) {
                 stageOrder = Object.values(processedData).map(stage => stage.name);
             }
@@ -1101,7 +1232,6 @@
                     </div>
                 `;
                 
-                // Eventos de drag and drop
                 item.addEventListener('dragstart', handleDragStart);
                 item.addEventListener('dragover', handleDragOver);
                 item.addEventListener('drop', handleDrop);
@@ -1138,11 +1268,9 @@
                 const draggedIndex = Array.from(this.parentNode.children).indexOf(draggedElement);
                 const targetIndex = Array.from(this.parentNode.children).indexOf(this);
                 
-                // Reordenar array
                 const draggedStage = stageOrder.splice(draggedIndex, 1)[0];
                 stageOrder.splice(targetIndex, 0, draggedStage);
                 
-                // Recriar interface
                 createStageOrderInterface();
             }
             
@@ -1164,7 +1292,7 @@
         function getWeekStart(date) {
             const d = new Date(date);
             const day = d.getDay();
-            const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Segunda-feira como início
+            const diff = d.getDate() - day + (day === 0 ? -6 : 1);
             d.setDate(diff);
             d.setHours(0, 0, 0, 0);
             return d;
